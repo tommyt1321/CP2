@@ -1,0 +1,6 @@
+/.venv
+/environment
+/__pycache__
+# Keep image datasets locally
+/train_images/
+/processed_images_384_v1/
