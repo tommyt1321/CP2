@@ -1,10 +1,10 @@
-# CP2 · A3 眼底视野实验 v1
+# CP2: A3 retinal field-of-view pilot (v1)
 
-这是独立的冻结模型对照，不是 A3 的替换版。数据只取 APTOS 原验证集（527 张）；脚本不训练、不读取 APTOS test 或 IDRiD 图像，也不修改 Figma、Gradio、既有模型及评估。使用已有的 384×384 RGB PNG、原有 Python 环境，以及原模型已记录的权重。FOV mask 估计的是可见眼底的外轮廓，不是病灶标注。
+This pilot compares three ways of defining image regions for the same frozen A3 classifier. It uses the original 527-image APTOS validation set and the existing 384×384 RGB PNGs, Python environment and model weights. It does not train a model, read APTOS test or IDRiD images, or change the primary model, evaluations, Figma design or Gradio interface. The field-of-view (FOV) mask estimates the outer edge of the visible fundus; it does not label lesions.
 
-## 在 Windows Git Bash 运行
+## Run in Windows Git Bash
 
-下载 ZIP 后，在 CP2 根目录解压。ZIP 只包含新的 `experiments/aptos_fov_v1/` 目录。下面假设下载到了默认 Downloads 文件夹；`unzip -n` 会跳过任何同名旧文件。保留这两级目录，勿把脚本单独拷贝进 CP2 根目录。
+If installing from the pilot ZIP, extract it at the CP2 root. The archive contains only `experiments/aptos_fov_v1/`. The example assumes it is in Downloads. `unzip -n` skips existing files. Keep the directory structure; do not move the scripts to the project root.
 
 ```bash
 cd /c/CP2
@@ -12,37 +12,37 @@ unzip -n ~/Downloads/CP2_A3_FOV_Pilot_v1.zip
 python -B experiments/aptos_fov_v1/run_fov.py preview
 ```
 
-1. **preview（建议先做）**：只用 RGB 检查全部 527 张验证图，不加载权重。查看 `sample_01.png` 的青绿色轮廓以及所有 `flagged_*.png`；对照原图，检查暗部、眼底边缘是否被切掉，外围相机黑框是否被误纳入。`mask_audit.csv` 有逐张结果；`masks/图像ID.png` 是每张的二值遮罩。没有警告不代表人工确认正确。空白或无法识别的照片会记为失败，不会偷偷回退到整张画布。
-2. **smoke**：用预先按 ID 哈希抽取的 3 张验证图和正式 A3 权重，跑通三个分支，逐张核对原版预测，并产生 Top 10% 对照图。不发布准确率。原版应能复现训练阶段已保存的验证预测。
-3. **compare**：用同一权重给全部 527 张验证图做配对比较。先检查 preview 和 smoke；发现切边问题请保留这次记录，勿把有问题的图移出队列再报分数。
+1. **Preview first.** Inspect all 527 validation images using RGB alone; no model weights are loaded. Compare the teal outline in `sample_01.png` and every `flagged_*.png` with the original RGB. Check whether the mask cuts off dark retinal tissue or includes the black camera border. `mask_audit.csv` records each image; `masks/<image_id>.png` contains its binary mask. An unflagged image has not necessarily passed visual review. A blank image or one with no identifiable fundus is recorded as a failure; the script does not substitute the full canvas.
+2. **Smoke test.** Run all three branches on three validation images selected in advance by hashing their IDs. Use the frozen A3 weights, check the original prediction for each image against the validation predictions saved during training, and generate top-10% comparison panels. This step does not report accuracy.
+3. **Full comparison.** Use the same weights for paired predictions on all 527 images. Review the preview and smoke test first. If a mask cuts off retinal tissue, keep that record; do not drop the image before reporting scores.
 
 ```bash
 python -B experiments/aptos_fov_v1/run_fov.py smoke
 python -B experiments/aptos_fov_v1/run_fov.py compare
 ```
 
-每次运行都在 `experiments/aptos_fov_v1/runs/<UTC时间>_<模式>_<随机ID>/` 新建目录。旧结果不会覆盖。没有覆盖、续写或选择任意输出路径的开关。若失败，保留当次错误和已有逐张记录；重跑另开目录。输出均已被本实验目录内的 .gitignore 排除。
+Each invocation creates `experiments/aptos_fov_v1/runs/<UTC_timestamp>_<mode>_<random_id>/`. There are no options to overwrite, resume or choose an arbitrary output path. If a run fails, keep the error and the per-image records already written. A retry creates a new directory. The experiment's `.gitignore` excludes run outputs.
 
-沿用原 CP2 环境（Python、NumPy、Pillow、SciPy、PyTorch、torchvision、PyG 等）。原训练环境的版本和上游代码、数据清单必须匹配。运行前无需获取新权重；如果找不到 SciPy，先记录错误，不要为此改动正在使用的正式环境。可用 `--device cpu` 显式选择 CPU。显卡只用于模型；分区仍在 CPU 上执行。
+Use the original CP2 environment (including Python, NumPy, Pillow, SciPy, PyTorch, torchvision and PyG). Package versions, upstream code and data manifests must match the training records. No new weights are needed. If SciPy is missing, record the error before changing the working environment. Use `--device cpu` to select the CPU explicitly. Only the model uses the GPU; region construction runs on the CPU.
 
-## 三组具体比较什么
+## What the three branches compare
 
-| 分支 | 区域定义 | 它能回答什么 |
+| Branch | Region definition | Question |
 |---|---|---|
-| original_A3 | 完整复用原版 boundary-SLIC 和 A3 forward，包括黑色区域 | 在同一批验证图上复现基线 |
-| original_regions_clipped | 从同一份原分区剔除视野外像素和完全在外的节点；若裁剪令一个区域断开，分开计数 | 保留原分区的起点，只改变区域对眼底的覆盖及相邻关系 |
-| FOV_resegmented | 只在估计视野内放置 256 个初始种子；分配、更新、连通性合并均不使用视野外像素作成员 | 把分区预算也集中到眼底后，预测和区域排序怎样改变 |
+| `original_A3` | Reuse the original boundary-aware SLIC partition and A3 forward pass on the full canvas, including the black border. | Can the baseline predictions be reproduced on the same validation images? |
+| `original_regions_clipped` | Start from the same partition, remove pixels and nodes outside the estimated FOV, and count disconnected fragments as separate regions. | How do predictions change when the original regions cover only the fundus and their adjacencies change? |
+| `FOV_resegmented` | Place 256 initial seeds inside the estimated FOV. Assignment, updates and connectivity merging exclude outside pixels from region membership. | How do predictions and region rankings change when the region budget is concentrated inside the fundus? |
 
-两个 FOV 分支都保持相同 RGB 和 DenseNet 特征提取。区域池化、图邻接、GAT、ViT 和 Rollout 仅接收有效区域，无背景节点。面积特征仍按原 384² 归一化，质心坐标系不变。DenseNet 感受野仍可看到边缘，不能声称整个模型对背景绝对不敏感。重新分区用了不同的种子位置、有效面积对应的空间步长及视野内边界强度归一化，因此第三组的差异不能全部归因于删去黑边。256 是目标种子数，连通性处理后的实际区域数可不同。
+Both FOV branches keep the same RGB input and DenseNet feature extraction. Region pooling, graph adjacency, GAT, ViT and Rollout use only valid regions, with no background nodes. Area is still normalized by 384², and centroid coordinates use the original coordinate system. DenseNet's receptive fields can still see the border. Resegmentation also changes seed positions, spatial step size and boundary-strength normalization inside the FOV, so its effects cannot be attributed solely to excluding the black border. The target is 256 seeds; the final region count may change after connectivity processing.
 
-## 看什么结果
+## Read the outputs
 
-- **preview**：`summary.json`、`mask_audit.csv`、代表性缩略图及所有标记图。
-- **smoke / compare**：`paired_predictions.csv` 包含每张的真值、三个分支的预测和五类概率、实际区域数、Top 10% 所选像素和落在估计 FOV 外的像素数。图中青绿色表示所选视野内像素，粉色表示所选视野外像素，不代表糖网病灶。Top 10% 按实际区域数向上取整；像素覆盖率可不等于 10%。
-- **完整 compare 的 summary.json**：三组 QWK、macro-F1、accuracy、混淆矩阵、相对原版差值及预测改变张数。同时保留每张 mask 的警告。只有 527 张都配对成功、所有原版预测按图像 ID 与 A3 epoch 21 的存档一致，才输出比较指标。脚本还检查了 A3 权重哈希和已读取的上游文件。标记为 `REVIEW_MASKS` 的结论仍须先看遮罩。
-- 两个 FOV 分支的“所选视野外像素数 = 0”是设计保证，不是准确率改善，也不是病灶定位验证。验证集已参与原模型选择；本实验是开发对照，不是新的独立测试。当前官方 IDRiD 指标保持原值。
+- **Preview:** `summary.json`, `mask_audit.csv`, representative thumbnails and all flagged images.
+- **Smoke test and full comparison:** `paired_predictions.csv` records the ground-truth grade, three predictions and their five-class probabilities, actual region counts, and the numbers of selected pixels overall and outside the estimated FOV. Teal marks selected pixels inside the FOV; pink marks selected pixels outside. Neither colour denotes a DR lesion. The top 10% is a fraction of the actual number of regions, rounded up; the selected pixel area need not be 10%.
+- **Full comparison:** `summary.json` gives QWK, macro-F1, accuracy and confusion matrices for each branch, differences from the original, and counts of changed predictions. Per-image mask warnings are retained. Metrics are written only when all 527 images have paired results and all original predictions match the archived A3 epoch-21 predictions by image ID. The script also checks the A3 weight hash and upstream files it reads. A `REVIEW_MASKS` flag calls for visual inspection before interpreting the result.
+- Zero selected pixels outside the estimated FOV is guaranteed by construction in the two experimental branches. It does not establish better grading or lesion localization. The validation set was used for model selection; this is a development comparison, not a new independent test. The primary IDRiD results remain unchanged.
 
-## 方法来源
+## Method sources
 
-- Papadopoulos, Topouzis & Delopoulos (2021), [An interpretable multiple-instance approach for the detection of referable diabetic retinopathy in fundus images](https://doi.org/10.1038/s41598-021-93632-8). 提供分类前过滤视野外图块的思路；本实验没有沿用其 50% 图块阈值。
-- Irving (2016), [maskSLIC](https://arxiv.org/abs/1606.09518). 提供 mask 内生成 superpixel 的方法依据。这里的代码是为 CP2 写的变体，不是该论文的官方实现。它复用 CP2 的边界检测、栅格路径、连通分量和已训练的神经模块。
+- Papadopoulos, Topouzis & Delopoulos (2021), [An interpretable multiple-instance approach for the detection of referable diabetic retinopathy in fundus images](https://doi.org/10.1038/s41598-021-93632-8). This motivated filtering out-of-FOV patches before classification. This pilot does not use their 50% patch threshold.
+- Irving (2016), [maskSLIC](https://arxiv.org/abs/1606.09518). This motivates generating superpixels inside a mask. The CP2 adaptation uses the project's boundary detector, grid paths, connected components and trained neural modules; it is not the paper's official implementation.
