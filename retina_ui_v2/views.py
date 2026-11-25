@@ -75,13 +75,29 @@ def results(selection, result, record, field, reason):
           f'<div class="ri-switch" role="group" aria-label="Relevance display"><button type="button" data-fov="full" aria-pressed="true">Full canvas</button><button type="button" data-fov="field" aria-pressed="false"{disabled}>Retinal field only</button></div>'
           f'<div class="ri-two">{figure(selection.prepared.rgb,"Unchanged 384 by 384 model input","Model input · full canvas")}<figure><div data-map="full">{photo(result["overlay"],"Full canvas Attention Rollout")}</div>{fieldimage}<figcaption>Relative relevance · dark purple to bright yellow</figcaption></figure></div>'
           f'<p id="ri-field-note" class="ri-callout">{escape(fieldnote)} Class-agnostic; this is not a lesion map.</p>')
+    slic=result.get('slic_views')
+    outlined=isinstance(slic,dict) and all(slic.get(k) is not None for k in ('positive','negative'))
+    availability='' if outlined else ' disabled'
+    hint=('Outlines include the black border.' if outlined else 'The original SLIC boundaries are unavailable for this result.')
+    drawing_control=(f'<div class="ri-slic-options"><button type="button" class="ri-quiet ri-slic" data-slic aria-pressed="false" aria-controls="ri-sign-positive ri-sign-negative" aria-describedby="ri-slic-note"{availability}>'
+                     '<span class="ri-toggle-track" aria-hidden="true"></span>Show SLIC boundaries</button>'
+                     f'<span class="ri-slic-count">{int(data["regions"])} superpixels</span></div>'
+                     f'<p class="ri-fine" id="ri-slic-note">Dots mark regions. Numbers match the table ranks. {hint}</p>')
     signs=[]
     for key,title,sgn,desc in [('positive','Positive sensitivity',1,'Orange · increasing the gate locally raises the target logit.'),('negative','Negative sensitivity',-1,'Cyan · increasing the gate locally lowers the target logit.')]:
         val=result.get(key); pairs=record.get('top_'+key)
-        art=figure(val,title+' of neighbouring regions',desc) if val is not None else '<p>No relationship overlay was returned for this sign.</p>'
-        signs.append(f'<article><h3>{title}</h3>{art}{pairs_html(pairs,sgn)}</article>')
+        alt=title+' of neighbouring regions'
+        if val is None:
+            art='<p>No relationship overlay was returned for this sign.</p>'
+        elif outlined:
+            art=(f'<figure><div data-slic-view="off">{photo(val,alt)}</div>'
+                 f'<div data-slic-view="on" hidden>{photo(slic[key],alt+" with SLIC region outlines")}</div>'
+                 f'<figcaption>{escape(desc)}</figcaption></figure>')
+        else:
+            art=figure(val,alt,desc)
+        signs.append(f'<article id="ri-sign-{key}"><h3>{title}</h3>{art}{pairs_html(pairs,sgn)}</article>')
     relation=(f'<p class="ri-kicker">A3 / GRAPH ATTENTION</p><h2>Region relationships</h2><p>Neighbouring regions are ranked separately by sign for the grade {grade} model score before softmax.</p>'
-              f'<div class="ri-two">{"".join(signs)}</div><p class="ri-callout">Up to five connections per sign. These are local model sensitivities, not blood vessels or confirmed lesion pairs.</p>')
+              f'{drawing_control}<div class="ri-two">{"".join(signs)}</div><p class="ri-callout">Up to five connections per sign. These are local model sensitivities, not blood vessels or confirmed lesion pairs.</p>')
     return (f'<div class="ri-results" data-stage="result" data-receipt="{uuid4().hex}"><nav class="ri-tabs" role="tablist" aria-label="Analysis results">{nav}</nav><div class="ri-panel">'
             +panel('overview',overview,True)+panel('relevance',roll)+panel('relations',relation)
             +f'</div><p class="ri-fine ri-meta">{int(data["regions"])} regions · {float(data["backend_compute_seconds"]):.1f} s backend time</p></div>')

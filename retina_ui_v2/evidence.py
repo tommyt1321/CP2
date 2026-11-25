@@ -17,6 +17,10 @@ class RelationView:
         sink = _pair_sink.get()
         if sink is not None:
             sink.update({k: record[k] for k in ("prediction", "target_class", "top_positive", "top_negative")})
+            # Keep only the arrays needed to draw this request. No hooks, gradients or image copies.
+            keys = ("labels", "pairs", "pair_signed", "geometry")
+            if all(k in evidence for k in keys):
+                sink["_drawing"] = {k: evidence[k] for k in keys}
         return evidence, record
 
 
@@ -35,7 +39,52 @@ def run(engine, prepared):
         _pair_sink.reset(token)
     if record and not result["prediction"] == record["prediction"] == record["target_class"]:
         raise ValueError("Relationship target does not match the displayed prediction.")
+    drawing = record.pop("_drawing", None)
+    result["slic_views"] = None
+    if drawing is not None:
+        try:
+            # Render after the original timing and state checks. Serialise Agg as in the baseline.
+            with engine.lock:
+                result["slic_views"] = relation_boundary_views(prepared.rgb, drawing, engine.relations, result)
+        except Exception as exc:
+            # An optional drawing must not invalidate or silently replace the original result.
+            print("SLIC display unavailable:", type(exc).__name__, flush=True)
     return result, record
+
+
+def boundary_photo(rgb, labels, count):
+    """Draw one thin contour per horizontal/vertical label transition on a display copy."""
+    rgb, labels = np.asarray(rgb), np.asarray(labels)
+    if (rgb.shape != (384, 384, 3) or rgb.dtype != np.uint8 or labels.shape != rgb.shape[:2]
+            or labels.dtype.kind not in "iu" or not 1 <= count <= labels.size
+            or not np.array_equal(np.unique(labels), np.arange(count))):
+        raise ValueError("The model's region labels and input grid do not agree.")
+    edge = np.zeros(labels.shape, dtype=bool)
+    edge[:, 1:] |= labels[:, 1:] != labels[:, :-1]
+    edge[1:, :] |= labels[1:, :] != labels[:-1, :]
+    out = rgb.copy()
+    pixels = rgb[edge].astype(np.int32)
+    light = (pixels @ np.array([54, 183, 19])) >= 160 * 256
+    ink = np.where(light[:, None], [40, 54, 54], [226, 234, 232])
+    out[edge] = ((3 * pixels + 2 * ink + 2) // 5).astype(np.uint8)
+    return out
+
+
+def relation_boundary_views(rgb, drawing, module, original):
+    """Put the unchanged signed links, dots and ranks on top of the true SLIC outlines."""
+    from _baseline import prototype_core_v1 as core
+    count = int(original["metrics"]["regions"])
+    outlined = boundary_photo(rgb, drawing["labels"], count)
+    prepared = dict(drawing, rgb_uint8=outlined)
+    output = {}
+    for key, sign in (("positive", 1), ("negative", -1)):
+        if original.get(key) is None:
+            raise ValueError("The original relationship overlay is unavailable.")
+        image = core.render_relations(prepared, module, sign)
+        if image.shape != original[key].shape:
+            raise ValueError("The outlined and original relationship views do not align.")
+        output[key] = image
+    return output
 
 
 def field_copy(rgb, overlay):

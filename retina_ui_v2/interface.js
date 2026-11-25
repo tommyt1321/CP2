@@ -147,6 +147,14 @@
     }
     if(t.matches("[data-close-about]")){closeAbout();return;}
     if(t.matches("[data-tab]")){tabAction(t);return;}
+    if(t.matches("[data-slic]")){
+      const panel=t.closest('[role="tabpanel"]');
+      local("slic","Updating region outlines…",()=>{
+        const on=t.getAttribute("aria-pressed")!=="true";
+        for(const v of all("[data-slic-view]",panel))v.hidden=(v.dataset.slicView==="on")!==on;
+        t.setAttribute("aria-pressed",String(on));
+      },()=>all("[data-slic-view]:not([hidden])",panel));return;
+    }
     if(t.matches("[data-fov]")){
       const box=t.closest(".ri-results"),key=t.dataset.fov;
       local("display","Updating display…",()=>{
